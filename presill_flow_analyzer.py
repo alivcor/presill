@@ -14,6 +14,35 @@ retransmissions = {} #dict that records all retransmissions
 end_ts = {} #dict that stores end timestamps of all flows
 last_push_ts = 0
 
+
+
+
+
+def reset_all_vars():
+    global numFlows, flow_buffer, client_sent, server_received, server_sent, client_received, retransmissions, end_ts, start_ts, page_load_begin, page_load_end, page_load_time, last_push_ts, totalByteSize, totalByteSizeforflow
+    numFlows = 0  # global flow counter
+    flow_buffer = []  # a global buffer containing (flow_id, Flow class object, flow state, numPacketsSentByClient, numPacketsReceivedByClient, totalBytesSent, estRTT, mss, icwnd) tuples.
+
+    client_sent = []  # SENT PACKETS DIRECTORY containing all the packets information sent by client but not necessarily acked by server, indexed by their flow ids and packet_id - (flow_id, packet_id, AAN, timestamp, pSize, seqNum, http_packet)
+    server_received = []  # SENT Packets by client which have been acknowledged by server
+    server_sent = []  # Packets sent by server but not acknowledged by client containing all the packets received by sender, indexed by their flow ids and packet_ids - (flow_id, packet_id, AAN, pSize, seqNum, http_packet)
+    client_received = []  # Packets received by client (acked from server_sent)
+    # all have format - (flow_id, packet_id, AAN, timestamp, pSize, seqNum, http_packet)
+
+    retransmissions = {}  # dict that records all retransmissions
+    end_ts = {}  # dict that stores end timestamps of all flows
+    start_ts = {}
+    page_load_begin = float("inf")
+    page_load_end = 0
+    page_load_time = 0
+    last_push_ts = 0
+    totalByteSize = 0
+    totalByteSizeforflow = 0
+    return True
+
+
+
+
 def newFlow(tcp_packet):
     """
     Creates a new Flow class object, and adds it to the FlowBuffer (flow_id, Flow class object, flow state, numPacketsSent, numPacketsReceived) tuples.. Also updates the global flow counter
@@ -351,7 +380,15 @@ class HTTPPacket:
 
 
 
-
+class MQTTPacket:
+    """
+    This is the class that defines an MQTTPacket Object
+    """
+    def __init(self, mqtt_packet):
+        mqtt_data =  str(mqtt_packet).split("\r\n")
+        # del http_data[-1]
+        self.http_headers = mqtt_data
+        self.http_data = mqtt_packet
 
 def parse_packet(pkt, ts):
     """
@@ -362,9 +399,9 @@ def parse_packet(pkt, ts):
     """
     global numFlows, flow_buffer, client_sent, server_received, server_sent, client_received, retransmissions, end_ts
     eth_packet = bytearray(pkt)
-    tcp_packet = TCPPacket(eth_packet[34:], ts, len(pkt))
+    tcp_packet = TCPPacket(eth_packet[24:], ts, len(pkt))
     if(tcp_packet.payloadLength > 0):
-        http_packet = HTTPPacket(eth_packet[(34+tcp_packet.dataOff):])
+        http_packet = HTTPPacket(eth_packet[(24+tcp_packet.dataOff):])
         return [tcp_packet, http_packet]
     else:
         return [tcp_packet, False]
@@ -378,7 +415,7 @@ def capture_flow(pkt_hist):
     """
     closedby = []
     global numFlows, flow_buffer, client_sent, server_received, server_sent, client_received, retransmissions, end_ts, last_push_ts
-    # print "Starting capture"
+    print "Starting capture"
     cnt = 0
     for ts, pkt in pkt_hist:
         cnt+=1
@@ -390,6 +427,7 @@ def capture_flow(pkt_hist):
             last_push_ts = ts
 
         fState = getFlowStateForPacket(tcp_packet)
+        # print "fState = ", fState
         if(fState == 2):
             #This means that the flow is in active state
             # print "Packet belongs to Flow", str(getFlowID(tcp_packet)), "which is already in ACTIVE state."
@@ -426,19 +464,19 @@ def capture_flow(pkt_hist):
             else:
                 # print "Suspicious Packet."
                 # print(closedby)
-                printFlowBuffer()
+                # printFlowBuffer()
                 break
         else:
             if(tcp_packet._RST == 1):
-                # print "RST Packet"
+                print "RST Packet"
                 updateFlowState(tcp_packet, 5)
                 end_ts[getFlowID(tcp_packet)] = ts
             if(tcp_packet._SYN == 1 and tcp_packet._ACK == 0):
-                # print "Flow initiated with timestamp", ts
+                print "Flow initiated with timestamp", ts
                 fid = newFlow(tcp_packet)
                 # updateFlowState(fid, 0) NO NEED TO DO THAT, WHEN WE CREATE A NEW FLOW, ITS DEFAULT STATE IS 0
             if(tcp_packet._SYN == 1 and tcp_packet._ACK == 1):
-                # print "Flow SYN/ACK Received"
+                print "Flow SYN/ACK Received"
                 updateFlowState(tcp_packet, 1)
             if(tcp_packet._SYN == 0 and tcp_packet._ACK == 1):
                 updateFlowState(tcp_packet, 2)
@@ -446,42 +484,20 @@ def capture_flow(pkt_hist):
             pkt_id = add_packet(tcp_packet, http_packet, cnt, ts)
         # print "Sent Buffer Length : ", len(client_sent), " | Received Buffer Length : ", len(server_sent), " | Acked Buffer Length : ", len(server_received)
         # printFlowBuffer()
-        # print "~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n\n"
+        # print "\n\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
         if(pkt_id == False):
-            # print " >> Add Packet Failure"
+            print " >> Add Packet Failure"
             break
     # print closedby
     return 0
 
 
-def reset_all_vars():
-    global numFlows, flow_buffer, client_sent, server_received, server_sent, client_received, retransmissions, end_ts, start_ts, page_load_begin, page_load_end, page_load_time, last_push_ts, totalByteSize, totalByteSizeforflow
-    numFlows = 0  # global flow counter
-    flow_buffer = []  # a global buffer containing (flow_id, Flow class object, flow state, numPacketsSentByClient, numPacketsReceivedByClient, totalBytesSent, estRTT, mss, icwnd) tuples.
-
-    client_sent = []  # SENT PACKETS DIRECTORY containing all the packets information sent by client but not necessarily acked by server, indexed by their flow ids and packet_id - (flow_id, packet_id, AAN, timestamp, pSize, seqNum, http_packet)
-    server_received = []  # SENT Packets by client which have been acknowledged by server
-    server_sent = []  # Packets sent by server but not acknowledged by client containing all the packets received by sender, indexed by their flow ids and packet_ids - (flow_id, packet_id, AAN, pSize, seqNum, http_packet)
-    client_received = []  # Packets received by client (acked from server_sent)
-    # all have format - (flow_id, packet_id, AAN, timestamp, pSize, seqNum, http_packet)
-
-    retransmissions = {}  # dict that records all retransmissions
-    end_ts = {}  # dict that stores end timestamps of all flows
-    start_ts = {}
-    page_load_begin = float("inf")
-    page_load_end = 0
-    page_load_time = 0
-    last_push_ts = 0
-    totalByteSize = 0
-    totalByteSizeforflow = 0
-    return True
-
 
 
 detectList = []
 print "\n\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
-print "ANALYSING USING http_8092"
-pkt_hist = pcap.pcap('http_8092.pcap')
+print "ANALYSING MQTT pcap"
+pkt_hist = pcap.pcap('mqtt_start.pcap')
 capture_flow(pkt_hist)
 # print "--------------------------------------------------"
 printFlowBuffer()
@@ -494,14 +510,7 @@ start_ts = {}
 for flow in flow_buffer:
     start_ts[flow[0]] = flow[1].start_timestamp
 
-page_load_begin = float("inf")
-for flow in start_ts:
-    page_load_begin = min([page_load_begin, start_ts[flow]])
 
-page_load_end = last_push_ts
-
-page_load_time = page_load_end - page_load_begin
-print "Page Loaded in approximately: ", page_load_time
 for flow in flow_buffer:
     totalByteSize = totalByteSize + flow[7] + flow[8]
 for flow in flow_buffer:
@@ -516,11 +525,10 @@ detectList.append(totalByteSize/numFlows)
 reset_all_vars()
 
 
-
-
-print "\n\n\n\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
-print "ANALYSING USING http_8093"
-pkt_hist = pcap.pcap('http_8093.pcap')
+detectList = []
+print "\n\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+print "ANALYSING HTTP pcap"
+pkt_hist = pcap.pcap('http_start.pcap')
 capture_flow(pkt_hist)
 # print "--------------------------------------------------"
 printFlowBuffer()
@@ -533,14 +541,6 @@ start_ts = {}
 for flow in flow_buffer:
     start_ts[flow[0]] = flow[1].start_timestamp
 
-page_load_begin = float("inf")
-for flow in start_ts:
-    page_load_begin = min([page_load_begin, start_ts[flow]])
-
-page_load_end = last_push_ts
-
-page_load_time = page_load_end - page_load_begin
-print "Page Loaded in approximately: ", page_load_time
 
 for flow in flow_buffer:
     totalByteSize = totalByteSize + flow[7] + flow[8]
@@ -550,52 +550,3 @@ print "Average Bytes Per Flow : ", str(totalByteSize/numFlows)
 print "Total Byte Size : ", str(totalByteSize)
 print "Total Number of Packets Sent : ", str(totalSent)
 detectList.append(totalByteSize/numFlows)
-
-
-reset_all_vars()
-
-
-
-
-print "\n\n\n\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
-print "ANALYSING USING http_8094"
-pkt_hist = pcap.pcap('http_8094.pcap')
-capture_flow(pkt_hist)
-# print "--------------------------------------------------"
-printFlowBuffer()
-# print "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-client_received.sort(key=lambda x: (x[0], x[5]))
-server_received.sort(key=lambda x: (fetchFlowDetails(x[0])[3], x[5]))
-totalByteSize = 0
-totalSent = 0
-start_ts = {}
-for flow in flow_buffer:
-    start_ts[flow[0]] = flow[1].start_timestamp
-
-page_load_begin = float("inf")
-for flow in start_ts:
-    page_load_begin = min([page_load_begin, start_ts[flow]])
-
-page_load_end = last_push_ts
-
-page_load_time = page_load_end - page_load_begin
-print "Page Loaded in approximately: ", page_load_time
-
-for flow in flow_buffer:
-    totalByteSize = totalByteSize + flow[7] + flow[8]
-for flow in flow_buffer:
-    totalSent = totalSent + flow[3] + flow[4]
-print "Average Bytes Per Flow : ", str(totalByteSize/numFlows)
-print "Total Byte Size : ", str(totalByteSize)
-print "Total Number of Packets Sent : ", str(totalSent)
-detectList.append(totalByteSize/numFlows)
-
-minIndex = detectList.index(min(detectList))
-maxIndex = detectList.index(max(detectList))
-
-print "--------------------------------------------------------------------------------------------------------\n\n"
-print "File", str(minIndex), "is HTTP1.0"
-
-print "File", str(maxIndex), "is HTTP2.0"
-
-print "The other one is HTTP1.1 (which has more average number of bytes per flow than HTTP 1.0 but less than 2.0"
